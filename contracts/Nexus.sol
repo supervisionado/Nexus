@@ -25,26 +25,26 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
 
     // Listing
     struct listing {
-        address payable seller;
-        uint256 price;
-        uint256 expiration;
-        bool active;
-    }  
+        address payable seller;   // 20 bytes
+        uint96 price;             // 12 bytes
+        uint64 expiration;        // 8 bytes
+        bool active;              // 1 byte
+    } 
 
     // User stats
     struct tradesInfo {
+        uint128 salesVol;
         uint32 sales;
-        uint32 purchases; 
-        uint32 listings;       
-        uint256 salesVol;      
+        uint32 purchases;
+        uint32 listings;
     }
 
     /* Configs */
-    bool private _collection_lock;
     address private collection;
-    uint256 private _floor_price;
-    uint256 private _nexus_fee;
+    uint96 private _floor_price;
+    uint96 private _nexus_fee;
     uint32 private _royalties_bps;
+    bool private _collection_lock;    
 
     /* Stats */
     uint32 private _totalListed;
@@ -98,7 +98,7 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
         Ownable(msg.sender) 
     {
         collection = address(0x67c932c45480F77C59A31cA817C0CbC6e13296bB);
-        _floor_price = 0.1 ether;
+        _floor_price = 0.02 ether;
         _nexus_fee = 0.001 ether;
         _royalties_bps = 500;
     }
@@ -113,17 +113,21 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
     /// @param tokenId token number
     /// @param price listing price
     /// @param durationSec duraction of listing validity in seconds
-    function listForSale(uint256 tokenId, uint256 price, uint256 durationSec) public whenNotPaused {
+    function listForSale(uint256 tokenId, uint96 price, uint64 durationSec) external whenNotPaused {
+
+        IERC721 nft = IERC721(collection);
         
         // Check for ownershop of the token
-        if (IERC721(collection).ownerOf(tokenId)!=msg.sender) revert UnAuthorized();
+        if (nft.ownerOf(tokenId)!=msg.sender) revert UnAuthorized();
         // Check for floor price, and a minimum 1h duration
         if ((durationSec<3600) || (price<_floor_price)) revert InputOutOfRange();
         // Fix stats for older listing & expired listings event
         if (_catalog[tokenId].active) {
-                    --_totalListed;
-                    --_totalUserTrades[_catalog[tokenId].seller].listings;
-                    if (block.timestamp > _catalog[tokenId].expiration) emit ListingExpired(tokenId);
+                    listing storage lst = _catalog[tokenId];  
+                    unchecked {
+                        --_totalListed;
+                        --_totalUserTrades[lst.seller].listings; }
+                    if (block.timestamp > lst.expiration) emit ListingExpired(tokenId);
         }
 
         _collection_lock = true;
@@ -132,13 +136,15 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
         _catalog[tokenId] = listing({
                                 seller: payable(msg.sender),
                                 price: price,
-                                expiration: block.timestamp + durationSec,
+                                expiration: uint64(block.timestamp + durationSec),
                                 active: true
                             });
         
         // Update stats
-        ++_totalListed;
-        ++_totalUserTrades[msg.sender].listings;
+        unchecked {
+            ++_totalListed;
+            ++_totalUserTrades[msg.sender].listings; 
+        }
 
         // Emit
         emit ListingCreated(tokenId, msg.sender, price, block.timestamp + durationSec);
@@ -147,9 +153,10 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
 
     /// Used for anyone that wants to make a purchase of a listed token on market
     /// @param tokenId token number
-    function buyListing(uint256 tokenId) public nonReentrant payable whenNotPaused {
+    function buyListing(uint256 tokenId) external nonReentrant payable whenNotPaused {
 
-        listing memory trade = _catalog[tokenId];       
+        listing storage trade = _catalog[tokenId];     
+        IERC721 nft = IERC721(collection);  
 
         // Check if listing still active
         if (!trade.active) revert ListingInactiveOrExpired();
@@ -157,7 +164,7 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
         if (block.timestamp >= trade.expiration) revert ListingInactiveOrExpired();
 
         // Calcute listing price, adding X% to the price, plus fixed market fee
-        uint256 price_after = trade.price;
+        uint128 price_after = trade.price;
         price_after = price_after * (10000 + _royalties_bps);
         price_after = price_after / 10000;
         price_after += _nexus_fee; 
@@ -165,27 +172,29 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
         // Check if the listing price was sent correctly
         if (msg.value < price_after) revert InsufficientFunds();
         // Check for ownership of the original maker
-        if (IERC721(collection).ownerOf(tokenId)!=trade.seller) revert OwnerChanged();
+        if (nft.ownerOf(tokenId)!=trade.seller) revert OwnerChanged();
         // Check for approval for Nexus contract
         bool approved =
-        IERC721(collection).isApprovedForAll(trade.seller, address(this))
-         || IERC721(collection).getApproved(tokenId) == address(this);
+        nft.isApprovedForAll(trade.seller, address(this))
+         || nft.getApproved(tokenId) == address(this);
         if (!approved) revert UnAuthorized();        
   
         // Pay seller & transfer to new owner
-        IERC721(collection).transferFrom(trade.seller, msg.sender, tokenId);        
+        nft.transferFrom(trade.seller, msg.sender, tokenId);        
         payable(trade.seller).sendValue(trade.price);
 
         // Update stats
-        ++_totalUserTrades[trade.seller].sales;
-        _totalUserTrades[trade.seller].salesVol += trade.price;
-        --_totalUserTrades[trade.seller].listings;        
-        ++_totalUserTrades[msg.sender].purchases;
-        --_totalListed;
-        ++_allTimesTotalSales;
+        unchecked {
+            ++_totalUserTrades[trade.seller].sales;
+            _totalUserTrades[trade.seller].salesVol += trade.price;
+            --_totalUserTrades[trade.seller].listings;        
+            ++_totalUserTrades[msg.sender].purchases;
+            --_totalListed;
+            ++_allTimesTotalSales;
+        }
 
         // Turn the listing off
-        _catalog[tokenId].active = false; 
+        trade.active = false; 
 
         // Emit
         emit ListingPurchased(tokenId, trade.seller, msg.sender, trade.price);
@@ -194,37 +203,42 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
 
     /// Fetch a specific listing 
     /// @param tokenId token number
-    function fetchTokenListing(uint256 tokenId) public view whenNotPaused returns (listing memory) {
+    function fetchTokenListing(uint256 tokenId) external view whenNotPaused returns (listing memory) {
         return _catalog[tokenId];
     }      
 
     /// Allow the token owner to disable the listing OR any user to disable expired listing
     /// @param tokenId token number
-    function disableListing(uint256 tokenId) public whenNotPaused { 
+    function disableListing(uint256 tokenId) external whenNotPaused { 
 
-        listing memory lst = _catalog[tokenId]; 
+        listing storage lst = _catalog[tokenId]; 
+        IERC721 nft = IERC721(collection);
 
         // Already inactive listings must be ignored
         if (!lst.active) revert ListingInactiveOrExpired();  
 
         // Any user can disable expired listing
         if (block.timestamp >= lst.expiration) {
-            --_totalListed;
-            --_totalUserTrades[lst.seller].listings; 
-            _catalog[tokenId].active = false;
+            unchecked {
+                --_totalListed;
+                --_totalUserTrades[lst.seller].listings; 
+            }
+            lst.active = false;
             emit ListingExpired(tokenId);
             return;
         }
         
         // Just owner OR original seller can disable listing
-        if ((IERC721(collection).ownerOf(tokenId)!=msg.sender) && 
+        if ((nft.ownerOf(tokenId)!=msg.sender) && 
             (lst.seller!=msg.sender)) 
             revert UnAuthorized();
 
         // Fix stats & disable listing emitting event
-        --_totalListed;
-        --_totalUserTrades[lst.seller].listings; 
-        _catalog[tokenId].active = false;
+        unchecked {
+            --_totalListed;
+            --_totalUserTrades[lst.seller].listings; 
+        }
+        lst.active = false;
         emit ListingDisabled(tokenId, msg.sender);
         
     }
@@ -256,7 +270,7 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
 
     /// Set the NFT collection address
     /// @param newAddr Collection address
-    function setCollectionAddr(address newAddr) public onlyOwner {
+    function setCollectionAddr(address newAddr) external onlyOwner {
         if (_collection_lock) revert UnAuthorized();
         if (newAddr==address(0)) revert NullAddressNotAllowed();
         collection = newAddr;
@@ -279,20 +293,20 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
 
     /// Set the royaltie fees
     /// @param newfee BPS fees
-    function setRoyaltiesBPS(uint32 newfee) public onlyOwner {
+    function setRoyaltiesBPS(uint32 newfee) external onlyOwner {
         if (newfee>9999) revert InputOutOfRange();
         _royalties_bps = newfee;
         emit FeesUpdated(_floor_price, _nexus_fee, _royalties_bps);
     }    
 
     /// Set fixed fee per transaction (in wei)
-    function setMarketplaceFee(uint256 newFee) public onlyOwner {
+    function setMarketplaceFee(uint96 newFee) external onlyOwner {
         _nexus_fee = newFee;
         emit FeesUpdated(_floor_price, _nexus_fee, _royalties_bps);
     } 
 
     /// Set NFT floor price (in wei)
-    function setFloorPrice(uint256 newPrice) public onlyOwner {
+    function setFloorPrice(uint96 newPrice) external onlyOwner {
         _floor_price = newPrice;
         emit FeesUpdated(_floor_price, _nexus_fee, _royalties_bps);
     }     
@@ -315,25 +329,25 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
 
     /// Get sales volume of specific user
     /// @param user User address
-    function getUserSalesVolume(address user) public view returns (uint256) {
+    function getUserSalesVolume(address user) external view returns (uint256) {
         return _totalUserTrades[user].salesVol;
     } 
 
     /// Get total number of user sales
     /// @param user User address
-    function getUserSales(address user) public view returns (uint256) {
+    function getUserSales(address user) external view returns (uint256) {
         return _totalUserTrades[user].sales;
     }  
 
     /// Get total number of user active listings
     /// @param user User address
-    function getUserListings(address user) public view returns (uint256) {
+    function getUserListings(address user) external view returns (uint256) {
         return _totalUserTrades[user].listings;
     }      
 
     /// Get total number of user puchases
     /// @param user User address
-    function getUserPurchases(address user) public view returns (uint256) {
+    function getUserPurchases(address user) external view returns (uint256) {
         return _totalUserTrades[user].purchases;
     }     
 
