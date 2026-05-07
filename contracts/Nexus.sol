@@ -1,0 +1,342 @@
+// SPDX-License-Identifier: MIT
+//
+//  $$\   $$\                                               $$\      $$\                     $$\                  $$\               $$\                               
+//  $$$\  $$ |                                              $$$\    $$$ |                    $$ |                 $$ |              $$ |                              
+//  $$$$\ $$ | $$$$$$\  $$\   $$\ $$\   $$\  $$$$$$$\       $$$$\  $$$$ | $$$$$$\   $$$$$$\  $$ |  $$\  $$$$$$\ $$$$$$\    $$$$$$\  $$ | $$$$$$\   $$$$$$$\  $$$$$$\  
+//  $$ $$\$$ |$$  __$$\ \$$\ $$  |$$ |  $$ |$$  _____|      $$\$$\$$ $$ | \____$$\ $$  __$$\ $$ | $$  |$$  __$$\\_$$  _|  $$  __$$\ $$ | \____$$\ $$  _____|$$  __$$\ 
+//  $$ \$$$$ |$$$$$$$$ | \$$$$  / $$ |  $$ |\$$$$$$\        $$ \$$$  $$ | $$$$$$$ |$$ |  \__|$$$$$$  / $$$$$$$$ | $$ |    $$ /  $$ |$$ | $$$$$$$ |$$ /      $$$$$$$$ |
+//  $$ |\$$$ |$$   ____| $$  $$<  $$ |  $$ | \____$$\       $$ |\$  /$$ |$$  __$$ |$$ |      $$  _$$<  $$   ____| $$ |$$\ $$ |  $$ |$$ |$$  __$$ |$$ |      $$   ____|
+//  $$ | \$$ |\$$$$$$$\ $$  /\$$\ \$$$$$$  |$$$$$$$  |      $$ | \_/ $$ |\$$$$$$$ |$$ |      $$ | \$$\ \$$$$$$$\  \$$$$  |$$$$$$$  |$$ |\$$$$$$$ |\$$$$$$$\ \$$$$$$$\ 
+//  \__|  \__| \_______|\__/  \__| \______/ \_______/       \__|     \__| \_______|\__|      \__|  \__| \_______|  \____/ $$  ____/ \__| \_______| \_______| \_______|
+//                                                                                                                        $$ |                                        
+//  coded by SuperVisionado, as a part of PhanicVerse                                                                     $$ |                                        
+//                                                                                                                        \__|                                        
+pragma solidity ^0.8.33;
+
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+
+contract Nexus is Ownable, ReentrancyGuard, Pausable {
+
+    using Address for address payable;
+
+    // Listing
+    struct listing {
+        address payable seller;
+        uint256 price;
+        uint256 expiration;
+        bool active;
+    }  
+
+    // User stats
+    struct tradesInfo {
+        uint32 sales;
+        uint32 purchases; 
+        uint32 listings;       
+        uint256 salesVol;      
+    }
+
+    /* Configs */
+    bool private _collection_lock;
+    address private collection;
+    uint256 private _floor_price;
+    uint256 private _nexus_fee;
+    uint32 private _royalties_bps;
+
+    /* Stats */
+    uint32 private _totalListed;
+    uint256 private _allTimesTotalSales;
+    uint256 private _salesWithdrew;
+    mapping(address => tradesInfo) private _totalUserTrades;
+
+    /* Listings */
+    mapping(uint256 => listing) private _catalog;
+
+    /* Errors */
+    error NullAddressNotAllowed();
+    error UnAuthorized();
+    error InputOutOfRange();
+    error ListingInactiveOrExpired();
+    error InsufficientFunds();
+    error OwnerChanged();
+    error EmptyAccount();
+
+    /* Events */
+    event ListingCreated(
+    uint256 indexed tokenId,
+    address indexed seller,
+    uint256 price,
+    uint256 expiration);
+
+    event ListingDisabled(
+    uint256 indexed tokenId,
+    address indexed seller);
+
+    event ListingPurchased(
+    uint256 indexed tokenId,
+    address indexed seller,
+    address indexed buyer,
+    uint256 price);
+
+    event FeesUpdated(
+    uint256 floorPrice,
+    uint256 marketplaceFee,
+    uint32 royaltiesBps);
+
+    event ListingExpired(uint256 indexed tokenId);    
+
+    /****************************** 
+     * 
+     *   Constructor (Set variables to initial values)
+     * 
+     *************************************************************/       
+
+    constructor() 
+        Ownable(msg.sender) 
+    {
+        collection = address(0x67c932c45480F77C59A31cA817C0CbC6e13296bB);
+        _floor_price = 0.1 ether;
+        _nexus_fee = 0.001 ether;
+        _royalties_bps = 500;
+    }
+
+    /****************************** 
+     * 
+     *   Listing (LIST, BUY, FETCH, DISABLE) related functions
+     * 
+     *************************************************************/    
+
+    /// Allow token onwer to write a listing to the catalog
+    /// @param tokenId token number
+    /// @param price listing price
+    /// @param durationSec duraction of listing validity in seconds
+    function listForSale(uint256 tokenId, uint256 price, uint256 durationSec) public whenNotPaused {
+        
+        // Check for ownershop of the token
+        if (IERC721(collection).ownerOf(tokenId)!=msg.sender) revert UnAuthorized();
+        // Check for floor price, and a minimum 1h duration
+        if ((durationSec<3600) || (price<_floor_price)) revert InputOutOfRange();
+        // Fix stats for older listing & expired listings event
+        if (_catalog[tokenId].active) {
+                    --_totalListed;
+                    --_totalUserTrades[_catalog[tokenId].seller].listings;
+                    if (block.timestamp > _catalog[tokenId].expiration) emit ListingExpired(tokenId);
+        }
+
+        _collection_lock = true;
+
+        // Write to catalog
+        _catalog[tokenId] = listing({
+                                seller: payable(msg.sender),
+                                price: price,
+                                expiration: block.timestamp + durationSec,
+                                active: true
+                            });
+        
+        // Update stats
+        ++_totalListed;
+        ++_totalUserTrades[msg.sender].listings;
+
+        // Emit
+        emit ListingCreated(tokenId, msg.sender, price, block.timestamp + durationSec);
+
+    }
+
+    /// Used for anyone that wants to make a purchase of a listed token on market
+    /// @param tokenId token number
+    function buyListing(uint256 tokenId) public nonReentrant payable whenNotPaused {
+
+        listing memory trade = _catalog[tokenId];       
+
+        // Check if listing still active
+        if (!trade.active) revert ListingInactiveOrExpired();
+        // Check if listing is not expired
+        if (block.timestamp >= trade.expiration) revert ListingInactiveOrExpired();
+
+        // Calcute listing price, adding X% to the price, plus fixed market fee
+        uint256 price_after = trade.price;
+        price_after = price_after * (10000 + _royalties_bps);
+        price_after = price_after / 10000;
+        price_after += _nexus_fee; 
+
+        // Check if the listing price was sent correctly
+        if (msg.value < price_after) revert InsufficientFunds();
+        // Check for ownership of the original maker
+        if (IERC721(collection).ownerOf(tokenId)!=trade.seller) revert OwnerChanged();
+        // Check for approval for Nexus contract
+        bool approved =
+        IERC721(collection).isApprovedForAll(trade.seller, address(this))
+         || IERC721(collection).getApproved(tokenId) == address(this);
+        if (!approved) revert UnAuthorized();        
+  
+        // Pay seller & transfer to new owner
+        IERC721(collection).transferFrom(trade.seller, msg.sender, tokenId);        
+        payable(trade.seller).sendValue(trade.price);
+
+        // Update stats
+        ++_totalUserTrades[trade.seller].sales;
+        _totalUserTrades[trade.seller].salesVol += trade.price;
+        --_totalUserTrades[trade.seller].listings;        
+        ++_totalUserTrades[msg.sender].purchases;
+        --_totalListed;
+        ++_allTimesTotalSales;
+
+        // Turn the listing off
+        _catalog[tokenId].active = false; 
+
+        // Emit
+        emit ListingPurchased(tokenId, trade.seller, msg.sender, trade.price);
+
+    }
+
+    /// Fetch a specific listing 
+    /// @param tokenId token number
+    function fetchTokenListing(uint256 tokenId) public view whenNotPaused returns (listing memory) {
+        return _catalog[tokenId];
+    }      
+
+    /// Allow the token owner to disable the listing OR any user to disable expired listing
+    /// @param tokenId token number
+    function disableListing(uint256 tokenId) public whenNotPaused { 
+
+        listing memory lst = _catalog[tokenId]; 
+
+        // Already inactive listings must be ignored
+        if (!lst.active) revert ListingInactiveOrExpired();  
+
+        // Any user can disable expired listing
+        if (block.timestamp >= lst.expiration) {
+            --_totalListed;
+            --_totalUserTrades[lst.seller].listings; 
+            _catalog[tokenId].active = false;
+            emit ListingExpired(tokenId);
+            return;
+        }
+        
+        // Just owner OR original seller can disable listing
+        if ((IERC721(collection).ownerOf(tokenId)!=msg.sender) && 
+            (lst.seller!=msg.sender)) 
+            revert UnAuthorized();
+
+        // Fix stats & disable listing emitting event
+        --_totalListed;
+        --_totalUserTrades[lst.seller].listings; 
+        _catalog[tokenId].active = false;
+        emit ListingDisabled(tokenId, msg.sender);
+        
+    }
+
+    /****************************** 
+     * 
+     *   Withdraw
+     * 
+     *************************************************************/        
+
+    /// Allows the owner to withdraw ALL collected funds (royalties + nexus fees)
+    function withdrawAll() public nonReentrant onlyOwner {
+        uint256 balance = address(this).balance;
+        if (balance==0) revert EmptyAccount();
+        payable(owner()).sendValue(balance);
+        _salesWithdrew = _allTimesTotalSales;
+    }   
+
+    /****************************** 
+     * 
+     *   Configuration related get&set functions
+     * 
+     *************************************************************/     
+
+    /// Get the NFT collection address
+    function getCollectionAddr() public view returns (address) {
+        return collection;
+    }
+
+    /// Set the NFT collection address
+    /// @param newAddr Collection address
+    function setCollectionAddr(address newAddr) public onlyOwner {
+        if (_collection_lock) revert UnAuthorized();
+        if (newAddr==address(0)) revert NullAddressNotAllowed();
+        collection = newAddr;
+    }
+
+    /// Get the basis point of royaltie fees
+    function getRoyaltiesBPS() public view returns (uint32) {
+        return _royalties_bps;
+    }
+
+    /// Get fixed fees (in wei)
+    function getMarketplaceFee() public view returns (uint256) {
+        return _nexus_fee;
+    }
+
+    /// Get floor price (in wei)
+    function getFloorPrice() public view returns (uint256) {
+        return _floor_price;
+    }        
+
+    /// Set the royaltie fees
+    /// @param newfee BPS fees
+    function setRoyaltiesBPS(uint32 newfee) public onlyOwner {
+        if (newfee>9999) revert InputOutOfRange();
+        _royalties_bps = newfee;
+        emit FeesUpdated(_floor_price, _nexus_fee, _royalties_bps);
+    }    
+
+    /// Set fixed fee per transaction (in wei)
+    function setMarketplaceFee(uint256 newFee) public onlyOwner {
+        _nexus_fee = newFee;
+        emit FeesUpdated(_floor_price, _nexus_fee, _royalties_bps);
+    } 
+
+    /// Set NFT floor price (in wei)
+    function setFloorPrice(uint256 newPrice) public onlyOwner {
+        _floor_price = newPrice;
+        emit FeesUpdated(_floor_price, _nexus_fee, _royalties_bps);
+    }     
+
+    /****************************** 
+     * 
+     *   Stats retrieve functions
+     * 
+     *************************************************************/       
+
+    /// Get total number of sales of all times since deploy
+    function getMarketplaceTotalSales() public view returns (uint256) {
+        return _allTimesTotalSales;
+    }
+
+    /// Get total number of active listings
+    function getMarketplaceTotalListings() public view returns (uint256) {
+        return _totalListed;
+    }    
+
+    /// Get sales volume of specific user
+    /// @param user User address
+    function getUserSalesVolume(address user) public view returns (uint256) {
+        return _totalUserTrades[user].salesVol;
+    } 
+
+    /// Get total number of user sales
+    /// @param user User address
+    function getUserSales(address user) public view returns (uint256) {
+        return _totalUserTrades[user].sales;
+    }  
+
+    /// Get total number of user active listings
+    /// @param user User address
+    function getUserListings(address user) public view returns (uint256) {
+        return _totalUserTrades[user].listings;
+    }      
+
+    /// Get total number of user puchases
+    /// @param user User address
+    function getUserPurchases(address user) public view returns (uint256) {
+        return _totalUserTrades[user].purchases;
+    }     
+
+
+  
+}
