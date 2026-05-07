@@ -46,6 +46,24 @@ describe("Nexus unit test", function () {
 
   });  
 
+  it("Should NOT set collection addy (locked!)", async function () {
+    
+    const { networkHelpers } = await network.connect();
+    const { nft, nexus, owner, otherAcc } = await networkHelpers.loadFixture(deployFixture);
+
+    const nexusaddr = await nexus.getAddress();
+    const fnftaddr = await nft.getAddress();
+    const owneraddr = owner.address;    
+  
+    await nft.safeMint(owneraddr, "ipfs://nft/1");
+    await nft.setApprovalForAll(nexusaddr, true);
+    await nexus.setCollectionAddr(fnftaddr);
+    await nexus.listForSale(0, 100000000000000000000n, 1000000n);     
+
+    await expect (nexus.setCollectionAddr("0x1230000000000000000000000000000000000321")).to.be.revertedWithCustomError(nexus,"UnAuthorized");
+
+  });    
+
 
   it("Should set & get royalties percent correctly", async function () {
     
