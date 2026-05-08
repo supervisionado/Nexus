@@ -13,7 +13,7 @@
 //                                                                                                                        \__|                                        
 pragma solidity ^0.8.33;
 
-import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
@@ -68,8 +68,8 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
     event ListingCreated(
     uint256 indexed tokenId,
     address indexed seller,
-    uint256 price,
-    uint256 expiration);
+    uint96 price,
+    uint64 expiration);
 
     event ListingDisabled(
     uint256 indexed tokenId,
@@ -79,11 +79,11 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
     uint256 indexed tokenId,
     address indexed seller,
     address indexed buyer,
-    uint256 price);
+    uint96 price);
 
     event FeesUpdated(
-    uint256 floorPrice,
-    uint256 marketplaceFee,
+    uint96 floorPrice,
+    uint96 marketplaceFee,
     uint32 royaltiesBps);
 
     event ListingExpired(uint256 indexed tokenId);    
@@ -116,21 +116,23 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
     function listForSale(uint256 tokenId, uint96 price, uint64 durationSec) external whenNotPaused {
 
         IERC721 nft = IERC721(collection);
+        listing storage lst = _catalog[tokenId]; 
         
         // Check for ownershop of the token
         if (nft.ownerOf(tokenId)!=msg.sender) revert UnAuthorized();
         // Check for floor price, and a minimum 1h duration
         if ((durationSec<3600) || (price<_floor_price)) revert InputOutOfRange();
         // Fix stats for older listing & expired listings event
-        if (_catalog[tokenId].active) {
-                    listing storage lst = _catalog[tokenId];  
+        if (lst.active) {
                     unchecked {
                         --_totalListed;
                         --_totalUserTrades[lst.seller].listings; }
                     if (block.timestamp > lst.expiration) emit ListingExpired(tokenId);
         }
 
-        _collection_lock = true;
+        if (!_collection_lock) {
+            _collection_lock = true;
+        }
 
         // Write to catalog
         _catalog[tokenId] = listing({
@@ -147,7 +149,7 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
         }
 
         // Emit
-        emit ListingCreated(tokenId, msg.sender, price, block.timestamp + durationSec);
+        emit ListingCreated(tokenId, msg.sender, price, uint64(block.timestamp + durationSec));
 
     }
 
@@ -158,13 +160,16 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
         listing storage trade = _catalog[tokenId];     
         IERC721 nft = IERC721(collection);  
 
+        tradesInfo storage sellerStats = _totalUserTrades[trade.seller];
+        tradesInfo storage buyerStats = _totalUserTrades[msg.sender];
+
         // Check if listing still active
         if (!trade.active) revert ListingInactiveOrExpired();
         // Check if listing is not expired
         if (block.timestamp >= trade.expiration) revert ListingInactiveOrExpired();
 
         // Calcute listing price, adding X% to the price, plus fixed market fee
-        uint128 price_after = trade.price;
+        uint256 price_after = trade.price;
         price_after = price_after * (10000 + _royalties_bps);
         price_after = price_after / 10000;
         price_after += _nexus_fee; 
@@ -185,10 +190,10 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
 
         // Update stats
         unchecked {
-            ++_totalUserTrades[trade.seller].sales;
-            _totalUserTrades[trade.seller].salesVol += trade.price;
-            --_totalUserTrades[trade.seller].listings;        
-            ++_totalUserTrades[msg.sender].purchases;
+            ++sellerStats.sales;
+            sellerStats.salesVol += uint128(trade.price);
+            --sellerStats.listings;        
+            ++buyerStats.purchases;
             --_totalListed;
             ++_allTimesTotalSales;
         }
