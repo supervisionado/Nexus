@@ -212,7 +212,7 @@ describe("Nexus unit test", function () {
     const ulist2 = await nexus.getUserListings(owner.address);
     //const balanceAfter = await ethers.provider.getBalance(owner.address);
     const nexusBalance = await ethers.provider.getBalance(nexusaddr);
-    await nexus.withdrawAll();
+    await nexus.withdrawAllTo(owneraddr);
     const nexusBalance2 = await ethers.provider.getBalance(nexusaddr);
 
     expect(listings).to.be.equal(1);
@@ -458,14 +458,30 @@ it("Should NOT buy listing with other acc (owner changed after listing)", async 
 
   });     
 
-  it("Should NOT withdrawAll (Empty account)", async function () {
+  it("Should NOT withdrawAllTo (Empty account)", async function () {
     
     const { networkHelpers } = await network.connect();
     const { nft, nexus, owner, otherAcc } = await networkHelpers.loadFixture(deployFixture);
 
-    await expect (nexus.withdrawAll()).to.be.revertedWithCustomError(nexus,"EmptyAccount");
+    const owneraddr = owner.address;
+
+    await expect (nexus.withdrawAllTo(owneraddr)).to.be.revertedWithCustomError(nexus,"EmptyAccount");
 
   });  
+
+
+  it("Should NOT withdrawAllTo (null address)", async function () {
+    
+    const { networkHelpers } = await network.connect();
+    const { nft, nexus, owner, otherAcc } = await networkHelpers.loadFixture(deployFixture);
+
+    const owneraddr = owner.address;
+
+    await expect (nexus.withdrawAllTo("0x0000000000000000000000000000000000000000")).to.be.revert(ethers);
+
+  });    
+
+
 
 
 

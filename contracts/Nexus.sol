@@ -255,10 +255,11 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
      *************************************************************/        
 
     /// Allows the owner to withdraw ALL collected funds (royalties + nexus fees)
-    function withdrawAll() public nonReentrant onlyOwner {
+    function withdrawAllTo(address addTo) public nonReentrant onlyOwner {
+        if (addTo == address(0)) revert();        
         uint256 balance = address(this).balance;
         if (balance==0) revert EmptyAccount();
-        payable(owner()).sendValue(balance);
+        payable(addTo).sendValue(balance);
     }   
 
     /****************************** 
