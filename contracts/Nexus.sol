@@ -259,7 +259,6 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
         uint256 balance = address(this).balance;
         if (balance==0) revert EmptyAccount();
         payable(owner()).sendValue(balance);
-        _salesWithdrew = _allTimesTotalSales;
     }   
 
     /****************************** 
