@@ -24,7 +24,7 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
     using Address for address payable;
 
     // Listing
-    struct listing {
+    struct Listing {
         address payable seller;   // 20 bytes
         uint96 price;             // 12 bytes
         uint64 expiration;        // 8 bytes
@@ -32,7 +32,7 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
     } 
 
     // User stats
-    struct tradesInfo {
+    struct TradesInfo {
         uint128 salesVol;
         uint32 sales;
         uint32 purchases;
@@ -50,10 +50,10 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
     uint32 private _totalListed;
     uint256 private _allTimesTotalSales;
     uint256 private _salesWithdrew;
-    mapping(address => tradesInfo) private _totalUserTrades;
+    mapping(address => TradesInfo) private _totalUserTrades;
 
     /* Listings */
-    mapping(uint256 => listing) private _catalog;
+    mapping(uint256 => Listing) private _catalog;
 
     /* Errors */
     error NullAddressNotAllowed();
@@ -116,7 +116,7 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
     function listForSale(uint256 tokenId, uint96 price, uint64 durationSec) external whenNotPaused {
 
         IERC721 nft = IERC721(collection);
-        listing storage lst = _catalog[tokenId]; 
+        Listing storage lst = _catalog[tokenId]; 
         
         // Check for ownershop of the token
         if (nft.ownerOf(tokenId)!=msg.sender) revert UnAuthorized();
@@ -135,7 +135,7 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
         }
 
         // Write to catalog
-        _catalog[tokenId] = listing({
+        _catalog[tokenId] = Listing({
                                 seller: payable(msg.sender),
                                 price: price,
                                 expiration: uint64(block.timestamp + durationSec),
@@ -157,11 +157,11 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
     /// @param tokenId token number
     function buyListing(uint256 tokenId) external nonReentrant payable whenNotPaused {
 
-        listing storage trade = _catalog[tokenId];     
+        Listing storage trade = _catalog[tokenId];     
         IERC721 nft = IERC721(collection);  
 
-        tradesInfo storage sellerStats = _totalUserTrades[trade.seller];
-        tradesInfo storage buyerStats = _totalUserTrades[msg.sender];
+        TradesInfo storage sellerStats = _totalUserTrades[trade.seller];
+        TradesInfo storage buyerStats = _totalUserTrades[msg.sender];
 
         // Check if listing still active
         if (!trade.active) revert ListingInactiveOrExpired();
@@ -208,7 +208,7 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
 
     /// Fetch a specific listing 
     /// @param tokenId token number
-    function fetchTokenListing(uint256 tokenId) external view whenNotPaused returns (listing memory) {
+    function fetchTokenListing(uint256 tokenId) external view whenNotPaused returns (Listing memory) {
         return _catalog[tokenId];
     }      
 
@@ -216,7 +216,7 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
     /// @param tokenId token number
     function disableListing(uint256 tokenId) external whenNotPaused { 
 
-        listing storage lst = _catalog[tokenId]; 
+        Listing storage lst = _catalog[tokenId]; 
         IERC721 nft = IERC721(collection);
 
         // Already inactive listings must be ignored
