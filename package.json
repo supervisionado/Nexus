@@ -8,6 +8,7 @@
     "test": "npx hardhat test test/Nexus.test.ts --coverage",
     "deploy:dev": "npx hardhat ignition deploy ignition/modules/Nexus.ts --network hardhatMainnet",
     "deploy:sep": "npx hardhat ignition deploy ignition/modules/Nexus.ts --network sepolia",
+    "deploy:eth": "npx hardhat ignition deploy ignition/modules/Nexus.ts --network mainnet",
     "deploy:stst": "npx hardhat ignition deploy ignition/modules/Nexus.ts --network sonicTestnet"
   },
   "keywords": [],

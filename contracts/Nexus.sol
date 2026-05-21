@@ -97,7 +97,7 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
     constructor() 
         Ownable(msg.sender) 
     {
-        collection = address(0x67c932c45480F77C59A31cA817C0CbC6e13296bB);
+        collection = address(0x9A7eEF9835D6d8eb68fd5A5bf3244847954357fB);
         _floor_price = 0.02 ether;
         _nexus_fee = 0.001 ether;
         _royalties_bps = 500;
