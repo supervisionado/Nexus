@@ -99,7 +99,7 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
     {
         collection = address(0x9A7eEF9835D6d8eb68fd5A5bf3244847954357fB);
         _floor_price = 0.02 ether;
-        _nexus_fee = 0.001 ether;
+        _nexus_fee = 0.00025 ether;
         _royalties_bps = 500;
     }
 
