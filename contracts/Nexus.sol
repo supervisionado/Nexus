@@ -354,7 +354,23 @@ contract Nexus is Ownable, ReentrancyGuard, Pausable {
     /// @param user User address
     function getUserPurchases(address user) external view returns (uint256) {
         return _totalUserTrades[user].purchases;
-    }     
+    }   
+
+    /****************************** 
+     * 
+     *   Pause/UnPause functions
+     * 
+     *************************************************************/        
+
+    /// Pause contract activity
+    function pause() public onlyOwner {
+        _pause();
+    }
+
+    /// Unpause contract activity
+    function unpause() public onlyOwner {
+        _unpause();
+    }  
 
 
   
